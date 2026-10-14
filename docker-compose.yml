@@ -1,0 +1,124 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: url-shortener-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: devpassword
+      POSTGRES_DB: urlshortener
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./db/auth-init.sql:/docker-entrypoint-initdb.d/020-auth-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  url-service:
+    build:
+      context: ./services/url-service
+    container_name: url-service
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: devpassword
+      DB_NAME: urlshortener
+      PORT: 3000
+      BASE_URL: http://localhost:3001
+      AUTH_SERVICE_URL: http://auth-service:3002
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+
+  redirect-service:
+    build:
+      context: ./services/redirect-service
+    container_name: url-shortener-redirect-service
+    environment:
+      PORT: 3001
+      URL_SERVICE_URL: http://url-service:3000
+      RABBITMQ_URL: amqp://app:devpassword@rabbitmq:5672
+
+    ports:
+      - "3001:3001"
+    depends_on:
+      - url-service
+  
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: app
+      RABBITMQ_DEFAULT_PASS: devpassword
+    ports:
+      - "5672:5672"     # AMQP (services connect here)
+      - "15672:15672"   # management UI (browser)
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  analytics-db:
+    image: timescale/timescaledb:latest-pg16
+    container_name: analytics-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: devpassword
+      POSTGRES_DB: analytics
+    ports:
+      - "5433:5432"
+    volumes:
+      - analytics_data:/var/lib/postgresql/data
+      - ./db/analytics-init.sql:/docker-entrypoint-initdb.d/010-analytics-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d analytics"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  analytics-service:
+    build:
+      context: ./services/analytics-service
+    container_name: analytics-service
+    environment:
+      RABBITMQ_URL: amqp://app:devpassword@rabbitmq:5672/
+      DATABASE_URL: postgresql://postgres:devpassword@analytics-db:5432/analytics
+    ports:
+      - "8000:8000"
+    depends_on:
+      analytics-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  auth-service:
+    build:
+      context: ./services/auth-service
+    container_name: auth-service
+    environment:
+      PORT: 3002
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: devpassword
+      DB_NAME: authdb
+      JWT_SECRET: ${JWT_SECRET}
+    ports:
+      - "3002:3002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  analytics_data:
