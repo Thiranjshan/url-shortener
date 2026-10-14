@@ -122,7 +122,7 @@ Each service owns its own data. No service reads another service's tables. `url-
 ### 1. Clone and create your environment file
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/Thiranjshan/url-shortener.git
 cd url-shortener-platform
 ```
 
