@@ -2,8 +2,10 @@
   "name": "url-service",
   "version": "1.0.0",
   "main": "index.js",
-  "scripts": {
-  "start": "node src/index.js"
+"scripts": {
+  "dev": "nodemon src/index.js",
+  "start": "node src/index.js",
+  "test": "node --test"
 },
   "keywords": [],
   "author": "",
