@@ -4,6 +4,7 @@ const URL_SERVICE = process.env.URL_SERVICE || 'http://localhost:3000';
 const REDIRECT_SERVICE = process.env.REDIRECT_SERVICE || 'http://localhost:3001';
 const AUTH_SERVICE = process.env.AUTH_SERVICE || 'http://localhost:3002';
 const ANALYTICS_SERVICE = process.env.ANALYTICS_SERVICE || 'http://localhost:8000';
+const WAIT_SECONDS = Number(process.env.WAIT_SECONDS || 60);
 
 let failures = 0;
 
@@ -26,6 +27,23 @@ function abortIfFailed() {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const jsonHeaders = { 'Content-Type': 'application/json' };
 
+// Services may still be starting up (especially in CI), so poll until healthy
+async function waitForHealthy(base) {
+  const deadline = Date.now() + WAIT_SECONDS * 1000;
+  let lastError = 'no response';
+  while (true) {
+    try {
+      const r = await fetch(`${base}/health`);
+      if (r.ok) return { ok: true };
+      lastError = `status ${r.status}`;
+    } catch (e) {
+      lastError = e.message;
+    }
+    if (Date.now() >= deadline) return { ok: false, detail: lastError };
+    await sleep(2000);
+  }
+}
+
 async function main() {
   console.log('Health checks');
   const services = {
@@ -34,13 +52,9 @@ async function main() {
     'auth-service': AUTH_SERVICE,
     'analytics-service': ANALYTICS_SERVICE,
   };
-  for (const [name, base] of Object.entries(services)) {
-    try {
-      const r = await fetch(`${base}/health`);
-      check(`${name} is healthy`, r.ok, `(status ${r.status})`);
-    } catch (e) {
-      check(`${name} is healthy`, false, `(${e.message})`);
-    }
+    for (const [name, base] of Object.entries(services)) {
+    const result = await waitForHealthy(base);
+    check(`${name} is healthy`, result.ok, `(${result.detail})`);
   }
   abortIfFailed();
 
@@ -116,14 +130,16 @@ async function main() {
   check('unknown code returns 404', r.status === 404, `(got ${r.status})`);
 
   console.log('Analytics (async pipeline)');
-  let total = 0;
-  for (let i = 0; i < 10 && total < 1; i++) {
+    let total = 0;
+  for (let i = 0; i < 20 && total < 1; i++) {
+    // Keep clicking: the very first click can land before redirect-service
+    // has connected to RabbitMQ, and clicks are skipped while it is disconnected
+    await fetch(`${REDIRECT_SERVICE}/${created.shortCode}`, { redirect: 'manual' });
+    await sleep(1000);
     r = await fetch(`${ANALYTICS_SERVICE}/stats/${created.shortCode}`);
     if (r.ok) total = (await r.json()).totalClicks;
-    if (total < 1) await sleep(1000);
   }
   check('click event reached analytics', total >= 1, `(totalClicks=${total})`);
-
   console.log(failures === 0 ? '\nAll checks passed' : `\n${failures} check(s) failed`);
   process.exit(failures === 0 ? 0 : 1);
 }
