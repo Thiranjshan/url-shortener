@@ -82,6 +82,7 @@ jobs:
           - redirect-service
           - auth-service
           - analytics-service
+          - web
     steps:
       - name: Check out code
         uses: actions/checkout@v4
@@ -147,6 +148,7 @@ jobs:
           - redirect-service
           - auth-service
           - analytics-service
+          - web
     steps:
       - name: Check out code
         uses: actions/checkout@v4

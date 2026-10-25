@@ -1,0 +1,31 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yaml
+  - postgres/init-configmap.yaml
+  - postgres/service.yaml
+  - postgres/statefulset.yaml
+  - rabbitmq/service.yaml
+  - rabbitmq/statefulset.yaml
+  - timescaledb/init-configmap.yaml
+  - timescaledb/service.yaml
+  - timescaledb/statefulset.yaml
+  - apps/auth-service.yaml
+  - apps/url-service.yaml
+  - apps/redirect-service.yaml
+  - apps/analytics-service.yaml
+
+images:
+  - name: url-service
+    newName: ghcr.io/thiranjshan/url-shortener/url-service
+    newTag: "sha-0576f99"
+  - name: redirect-service
+    newName: ghcr.io/thiranjshan/url-shortener/redirect-service
+    newTag: "sha-0576f99"
+  - name: auth-service
+    newName: ghcr.io/thiranjshan/url-shortener/auth-service
+    newTag: "sha-0576f99"
+  - name: analytics-service
+    newName: ghcr.io/thiranjshan/url-shortener/analytics-service
+    newTag: "sha-0576f99"
