@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createApp } = require('../app');
+const { createApp } = require('../src/app');
 
 // Fakes standing in for auth-service
 const authOk = async () => ({
