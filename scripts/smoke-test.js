@@ -30,16 +30,16 @@ const jsonHeaders = { 'Content-Type': 'application/json' };
 
 // Services may still be starting up (especially in CI), so poll until healthy
 async function waitForHealthy(base, path = '/health') {
-  const r = await fetch(`${base}${path}`);
   const deadline = Date.now() + WAIT_SECONDS * 1000;
   let lastError = 'no response';
   while (true) {
     try {
-      const r = await fetch(`${base}/health`);
+      const r = await fetch(`${base}${path}`);
       if (r.ok) return { ok: true };
       lastError = `status ${r.status}`;
     } catch (e) {
-      lastError = e.message;
+      // Connection errors (refused, reset) are expected while services start
+      lastError = e.cause ? `${e.message}: ${e.cause.message}` : e.message;
     }
     if (Date.now() >= deadline) return { ok: false, detail: lastError };
     await sleep(2000);
