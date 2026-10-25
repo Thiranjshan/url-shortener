@@ -7,6 +7,7 @@ const forwards = [
   ['svc/redirect-service', '3001:3001'],
   ['svc/auth-service', '3002:3002'],
   ['svc/analytics-service', '8000:8000'],
+  ['svc/web', '8080:80'],
 ];
 
 const children = forwards.map(([target, ports]) => {

@@ -15,6 +15,7 @@ resources:
   - apps/url-service.yaml
   - apps/redirect-service.yaml
   - apps/analytics-service.yaml
+  - apps/web.yaml
 
 images:
   - name: url-service
@@ -28,4 +29,7 @@ images:
     newTag: "sha-0576f99"
   - name: analytics-service
     newName: ghcr.io/thiranjshan/url-shortener/analytics-service
+    newTag: "sha-0576f99"
+  - name: web
+    newName: ghcr.io/thiranjshan/url-shortener/web
     newTag: "sha-0576f99"
