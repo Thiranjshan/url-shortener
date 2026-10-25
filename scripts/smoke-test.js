@@ -5,6 +5,7 @@ const REDIRECT_SERVICE = process.env.REDIRECT_SERVICE || 'http://localhost:3001'
 const AUTH_SERVICE = process.env.AUTH_SERVICE || 'http://localhost:3002';
 const ANALYTICS_SERVICE = process.env.ANALYTICS_SERVICE || 'http://localhost:8000';
 const WAIT_SECONDS = Number(process.env.WAIT_SECONDS || 60);
+const WEB = process.env.WEB || 'http://localhost:8080';
 
 let failures = 0;
 
@@ -28,7 +29,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const jsonHeaders = { 'Content-Type': 'application/json' };
 
 // Services may still be starting up (especially in CI), so poll until healthy
-async function waitForHealthy(base) {
+async function waitForHealthy(base, path = '/health') {
+  const r = await fetch(`${base}${path}`);
   const deadline = Date.now() + WAIT_SECONDS * 1000;
   let lastError = 'no response';
   while (true) {
@@ -140,6 +142,42 @@ async function main() {
     if (r.ok) total = (await r.json()).totalClicks;
   }
   check('click event reached analytics', total >= 1, `(totalClicks=${total})`);
+
+    console.log('Front door (web)');
+  const web = await waitForHealthy(WEB, '/healthz');
+  check('web is healthy', web.ok, `(${web.detail})`);
+  abortIfFailed();
+
+  r = await fetch(`${WEB}/`);
+  const html = await r.text();
+  check('web serves the UI page', r.status === 200 && html.includes('URL Shortener'), `(got ${r.status})`);
+
+  r = await fetch(`${WEB}/api/urls`, {
+    method: 'POST',
+    headers: { ...jsonHeaders, Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ url: 'https://example.com/via-web' }),
+  });
+  const viaWeb = await r.json();
+  check('create through web returns 201', r.status === 201 && !!viaWeb.shortCode, `(got ${r.status})`);
+
+  r = await fetch(`${WEB}/api/urls`, { headers: { Authorization: `Bearer ${token}` } });
+  const list = await r.json();
+  check(
+    'list through web includes the new link',
+    r.status === 200 && Array.isArray(list) && list.some((l) => l.shortCode === viaWeb.shortCode),
+    `(got ${r.status})`
+  );
+
+  r = await fetch(`${WEB}/${viaWeb.shortCode}`, { redirect: 'manual' });
+  check(
+    'short link redirects through web',
+    r.status === 302 && r.headers.get('location') === 'https://example.com/via-web',
+    `(got ${r.status})`
+  );
+
+  r = await fetch(`${WEB}/api/auth/verify`);
+  check('internal verify endpoint is not exposed', r.status === 404, `(got ${r.status})`);
+
   console.log(failures === 0 ? '\nAll checks passed' : `\n${failures} check(s) failed`);
   process.exit(failures === 0 ? 0 : 1);
 }
