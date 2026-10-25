@@ -124,3 +124,32 @@ test('GET /urls/:code returns the original URL, or 404 when unknown', async () =
     assert.equal(missing.status, 404);
   });
 });
+
+test('GET /urls requires credentials', async () => {
+  await withServer({ pool: noPool, fetchFn: authOk }, async (base) => {
+    const res = await fetch(`${base}/urls`);
+    assert.equal(res.status, 401);
+  });
+});
+
+test("GET /urls lists only the authenticated user's links", async () => {
+  const calls = [];
+  const pool = {
+    query: async (sql, params) => {
+      calls.push(params);
+      return {
+        rows: [
+          { short_code: 'abc1234', original_url: 'https://example.com', created_at: '2026-10-25T10:00:00.000Z' },
+        ],
+      };
+    },
+  };
+  await withServer({ pool, fetchFn: authOk }, async (base) => {
+    const res = await fetch(`${base}/urls`, { headers: { Authorization: 'Bearer ok' } });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), [
+      { shortCode: 'abc1234', originalUrl: 'https://example.com', createdAt: '2026-10-25T10:00:00.000Z' },
+    ]);
+    assert.deepEqual(calls[0], [7]); // filtered by the user id that auth-service returned
+  });
+});

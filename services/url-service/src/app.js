@@ -92,6 +92,28 @@ function createApp({ pool, authServiceUrl, baseUrl, fetchFn = fetch }) {
       res.status(500).json({ error: 'failed to look up short url' });
     }
   });
+  
+  // List the authenticated user's most recent links
+  app.get('/urls', requireAuth, async (req, res) => {
+    try {
+      const result = await pool.query(
+        `SELECT short_code, original_url, created_at
+         FROM urls WHERE user_id = $1
+         ORDER BY created_at DESC LIMIT 20`,
+        [req.user.id]
+      );
+      res.json(
+        result.rows.map((row) => ({
+          shortCode: row.short_code,
+          originalUrl: row.original_url,
+          createdAt: row.created_at,
+        }))
+      );
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'failed to list urls' });
+    }
+  });
 
   return app;
 }
