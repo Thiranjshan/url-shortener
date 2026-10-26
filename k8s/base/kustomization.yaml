@@ -20,16 +20,16 @@ resources:
 images:
   - name: url-service
     newName: ghcr.io/thiranjshan/url-shortener/url-service
-    newTag: "sha-3ec40e0"
+    newTag: "sha-2fa3075"
   - name: redirect-service
     newName: ghcr.io/thiranjshan/url-shortener/redirect-service
-    newTag: "sha-3ec40e0"
+    newTag: "sha-2fa3075"
   - name: auth-service
     newName: ghcr.io/thiranjshan/url-shortener/auth-service
-    newTag: "sha-3ec40e0"
+    newTag: "sha-2fa3075"
   - name: analytics-service
     newName: ghcr.io/thiranjshan/url-shortener/analytics-service
-    newTag: "sha-3ec40e0"
+    newTag: "sha-2fa3075"
   - name: web
     newName: ghcr.io/thiranjshan/url-shortener/web
-    newTag: "sha-3ec40e0"
+    newTag: "sha-2fa3075"
