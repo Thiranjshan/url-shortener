@@ -1,0 +1,3 @@
+region           = "ap-south-1"
+instance_type    = "REPLACE_WITH_YOUR_INSTANCE_TYPE"
+ssh_allowed_cidr = "203.0.113.10/32"
