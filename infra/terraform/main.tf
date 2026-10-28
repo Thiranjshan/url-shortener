@@ -65,7 +65,14 @@ resource "aws_instance" "server" {
   associate_public_ip_address = true
 
   # Runs once on first boot; the replace() guards against Windows line endings
-  user_data                   = replace(file("${path.module}/user_data.sh"), "\r\n", "\n")
+  user_data = replace(
+    templatefile("${path.module}/user_data.sh.tftpl", {
+      repo_url = var.repo_url
+      git_ref  = var.git_ref
+    }),
+    "\r\n",
+    "\n"
+  )
   user_data_replace_on_change = true
 
   metadata_options {

@@ -1,0 +1,12 @@
+#!/bin/bash
+# Runs once on first boot. The real work lives in the repo (deploy/bootstrap.sh),
+# so changing how the app is deployed does not require a new server design.
+set -euxo pipefail
+exec > >(tee -a /var/log/bootstrap.log) 2>&1
+
+apt-get update -y
+apt-get install -y git curl
+
+git clone --depth 1 --branch "${git_ref}" "${repo_url}" /opt/url-shortener
+bash /opt/url-shortener/deploy/bootstrap.sh
+echo "bootstrap finished"
