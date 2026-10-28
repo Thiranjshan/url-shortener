@@ -1,4 +1,5 @@
 import asyncio
+import asyncpg
 import json
 from datetime import datetime, timezone
 
@@ -157,3 +158,56 @@ def test_health_endpoint():
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "service": "analytics-service"}
+
+def test_ready_reports_503_until_database_and_queue_are_connected(monkeypatch):
+    client = TestClient(main.app)
+
+    monkeypatch.setitem(main.state, "pool", None)
+    monkeypatch.setitem(main.state, "conn", None)
+    assert client.get("/ready").status_code == 503
+
+    monkeypatch.setitem(main.state, "pool", FakePool())
+    assert client.get("/ready").status_code == 503  # queue still not connected
+
+    monkeypatch.setitem(main.state, "conn", object())
+    assert client.get("/ready").status_code == 200
+
+
+def test_stats_returns_503_while_the_database_is_not_connected(monkeypatch):
+    monkeypatch.setitem(main.state, "pool", None)
+    client = TestClient(main.app)
+
+    assert client.get("/stats/abc1234").status_code == 503
+
+
+def test_pool_creation_retries_until_the_database_is_up(monkeypatch):
+    attempts = {"count": 0}
+    delays = []
+
+    async def fake_create_pool(*args, **kwargs):
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            raise ConnectionRefusedError("database not up yet")
+        return "the-pool"
+
+    async def fake_sleep(delay):
+        delays.append(delay)
+
+    monkeypatch.setattr(main.asyncpg, "create_pool", fake_create_pool)
+    monkeypatch.setattr(main.asyncio, "sleep", fake_sleep)
+
+    pool = asyncio.run(main.create_pool_with_retry())
+
+    assert pool == "the-pool"
+    assert attempts["count"] == 3
+    assert delays == [1, 2]  # backs off between attempts
+
+
+def test_pool_creation_does_not_retry_on_bad_credentials(monkeypatch):
+    async def fake_create_pool(*args, **kwargs):
+        raise asyncpg.InvalidPasswordError("password authentication failed")
+
+    monkeypatch.setattr(main.asyncpg, "create_pool", fake_create_pool)
+
+    with pytest.raises(asyncpg.InvalidPasswordError):
+        asyncio.run(main.create_pool_with_retry())

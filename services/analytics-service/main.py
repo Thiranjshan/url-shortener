@@ -7,7 +7,7 @@ from datetime import datetime
 
 import aio_pika
 import asyncpg
-from fastapi import FastAPI
+from fastapi import FastAPI ,HTTPException
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("analytics-service")
@@ -55,16 +55,41 @@ async def start_consumer():
             await asyncio.sleep(5)
 
 
+async def create_pool_with_retry():
+    """Keep trying while the database is still starting up."""
+    delay = 1
+    while True:
+        try:
+            return await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
+        except (OSError, asyncpg.CannotConnectNowError) as e:
+            # Connection refused, DNS not ready, or "database system is starting up".
+            # Anything else (for example a wrong password) is a real error and is raised.
+            log.warning("database not ready (%s), retrying in %ss", e, delay)
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 10)
+
+
+async def connect_dependencies():
+    """Runs in the background so the HTTP server (and /health) is up immediately."""
+    try:
+        state["pool"] = await create_pool_with_retry()
+        log.info("connected to the database")
+        await start_consumer()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        log.exception("startup failed; the service will stay not-ready")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    state["pool"] = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
-    task = asyncio.create_task(start_consumer())
+    task = asyncio.create_task(connect_dependencies())
     yield
     task.cancel()
     if state["conn"]:
         await state["conn"].close()
-    await state["pool"].close()
-
+    if state["pool"]:
+        await state["pool"].close()
 
 app = FastAPI(title="analytics-service", lifespan=lifespan)
 
@@ -73,10 +98,19 @@ app = FastAPI(title="analytics-service", lifespan=lifespan)
 async def health():
     return {"status": "ok", "service": "analytics-service"}
 
+@app.get("/ready")
+async def ready():
+    # Ready means able to store clicks (database) and receive them (queue)
+    if state["pool"] is None or state["conn"] is None:
+        raise HTTPException(status_code=503, detail="not ready: dependencies not connected yet")
+    return {"status": "ready", "service": "analytics-service"}
+
 
 @app.get("/stats/{short_code}")
 async def stats(short_code: str, hours: int = 24):
     pool = state["pool"]
+    if pool is None:
+        raise HTTPException(status_code=503, detail="database not connected yet")
 
     total = await pool.fetchval(
         "SELECT count(*) FROM clicks WHERE short_code = $1", short_code
