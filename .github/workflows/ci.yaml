@@ -131,10 +131,23 @@ jobs:
       - name: Stop the stack
         if: always()
         run: docker compose down -v
+      
+  validate-manifests:
+    name: Validate Kubernetes manifests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Render the base
+        run: kubectl kustomize k8s/base > /dev/null
+
+      - name: Render the AWS overlay
+        run: kubectl kustomize k8s/overlays/aws > /dev/null
 
   publish:
     name: Publish image (${{ matrix.service }})
-    needs: [test-node, test-python, integration]
+    needs: [test-node, test-python, integration,validate-manifests]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -185,3 +198,38 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+
+  release:
+    name: Pin the new image tags in Git
+    needs: [publish]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    steps:
+      - name: Check out the latest main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Point the manifests at the images that were just published
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          sed -i -E "s/sha-[0-9a-f]{7}/sha-${SHORT_SHA}/g" k8s/base/kustomization.yaml
+
+      - name: Commit and push if anything changed
+        run: |
+          if git diff --quiet; then
+            echo "Tags already up to date"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore(release): deploy images sha-${GITHUB_SHA::7} [skip ci]"
+          git pull --rebase origin main
+          git push origin main
+  
