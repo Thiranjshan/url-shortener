@@ -30,3 +30,15 @@ variable "root_volume_gb" {
   type        = number
   default     = 20
 }
+
+variable "repo_url" {
+  description = "Git repository the server clones to deploy the app"
+  type        = string
+  default     = "https://github.com/Thiranjshan/url-shortener.git"
+}
+
+variable "git_ref" {
+  description = "Branch or tag of the repository to deploy"
+  type        = string
+  default     = "main"
+}

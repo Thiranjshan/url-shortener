@@ -24,12 +24,12 @@ function abortIfFailed() {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const jsonHeaders = { 'Content-Type': 'application/json' };
 
-async function waitForHealthy() {
+async function waitForHealthy(path = '/healthz') {
   const deadline = Date.now() + WAIT_SECONDS * 1000;
   let lastError = 'no response';
   while (true) {
     try {
-      const r = await fetch(`${WEB}/healthz`);
+      const r = await fetch(`${WEB}${path}`);
       if (r.ok) return { ok: true };
       lastError = `status ${r.status}`;
     } catch (e) {
@@ -46,6 +46,10 @@ async function main() {
   console.log('Front door');
   const health = await waitForHealthy();
   check('front door is healthy', health.ok, `(${health.detail})`);
+  abortIfFailed();
+  console.log('Backend');
+  const backend = await waitForHealthy('/api/stats/probe');
+  check('backend services are answering', backend.ok, `(${backend.detail})`);
   abortIfFailed();
 
   let r = await fetch(`${WEB}/`);
