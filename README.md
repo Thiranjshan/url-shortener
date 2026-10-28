@@ -12,12 +12,15 @@ The application is deliberately simple. The project focuses on the engineering a
 
 ## Screenshots
 
-|                                                        |                                                                                          |
-| ------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| ![The URL shortener running on AWS](doc/images/ui.png) | ![Successful GitHub Actions CI run](doc/images/pipeline.png)                             |
-| The app running on AWS                                 | ![CI test run: service tests, integration, and image publishing](doc/images/ci-test.png) |
-| ![Kubernetes pods running on AWS](doc/images/pods.png) | ![Terraform plan and apply](doc/images/terraform.jpeg)                                   |
-| Everything running on the k3s server                   | Server created from code                                                                 |
+| ![The URL shortener running on AWS](doc/images/ui.png) | ![Kubernetes pods running on AWS](doc/images/pods.png) |
+| ------------------------------------------------------ | ------------------------------------------------------ |
+| The app running on AWS                                 | Services running on the k3s server                     |
+| ![GitHub Actions workflow summary](doc/images/pipeline.png) | ![CI test run showing pull request checks](doc/images/ci-test.png) |
+| Successful workflow summary                            | Unit tests, image builds, and integration checks       |
+
+![Terraform plan and apply](doc/images/terraform.jpeg)
+
+Terraform plan and apply
 
 ---
 
