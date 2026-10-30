@@ -1,8 +1,11 @@
 const express = require('express');
 const { nanoid } = require('nanoid');
+const { createMetrics } = require('./metrics');
 
 function createApp({ pool, authServiceUrl, baseUrl, fetchFn = fetch }) {
   const app = express();
+  const metrics = createMetrics();
+  app.use(metrics.middleware);
   app.use(express.json());
 
   // Ask auth-service whether the caller's credentials are valid
@@ -115,7 +118,11 @@ function createApp({ pool, authServiceUrl, baseUrl, fetchFn = fetch }) {
     }
   });
 
+  app.get('/metrics', metrics.handler);
+
   return app;
 }
+
+
 
 module.exports = { createApp };

@@ -4,10 +4,13 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime
+import time
 
 import aio_pika
 import asyncpg
 from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Response
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("analytics-service")
@@ -17,6 +20,15 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:devpassword@loca
 QUEUE = "click_events"
 
 state = {"pool": None, "conn": None}
+
+HTTP_DURATION = Histogram(
+    "http_request_duration_seconds",
+    "HTTP request duration in seconds",
+    ["method", "route", "status"],
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5),
+)
+CLICKS_STORED = Counter("clicks_stored", "Click events stored in the database")
+CLICKS_DROPPED = Counter("clicks_dropped", "Malformed click events dropped")
 
 
 async def handle_message(message: aio_pika.IncomingMessage):
@@ -29,6 +41,7 @@ async def handle_message(message: aio_pika.IncomingMessage):
         except (ValueError, KeyError) as e:
             # Malformed event: retrying will never fix it, so drop it
             log.error("dropping malformed event: %s", e)
+            CLICKS_DROPPED.inc()
             return
 
         await state["pool"].execute(
@@ -36,6 +49,7 @@ async def handle_message(message: aio_pika.IncomingMessage):
             "VALUES ($1, $2, $3, $4, $5)",
             ts, code, event.get("userAgent"), event.get("referer"), event.get("ip"),
         )
+        CLICKS_STORED.inc()
 
 
 async def start_consumer():
@@ -67,6 +81,23 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="analytics-service", lifespan=lifespan)
+
+@app.middleware("http")
+async def record_metrics(request, call_next):
+    start = time.perf_counter()
+    response = await call_next(request)
+    route = request.scope.get("route")
+    path = route.path if route else "unmatched"
+    if path not in ("/metrics", "/health", "/ready"):
+        HTTP_DURATION.labels(request.method, path, str(response.status_code)).observe(
+            time.perf_counter() - start
+        )
+    return response
+
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics():
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/health")

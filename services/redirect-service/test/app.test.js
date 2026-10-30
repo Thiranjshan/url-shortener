@@ -89,3 +89,24 @@ test('health endpoint reports ok', async () => {
   assert.equal(res.statusCode, 200);
   assert.deepEqual(res.json(), { status: 'ok', service: 'redirect-service' });
 });
+
+test('GET /metrics exposes redirect metrics and ignores health and metrics requests', async () => {
+  const app = makeApp({ fetchFn: found('https://example.com/target'), publishClick: () => {} });
+  await app.inject({ method: 'GET', url: '/abc1234' });
+  await app.inject({ method: 'GET', url: '/health' });
+
+  const res = await app.inject({ method: 'GET', url: '/metrics' });
+  assert.equal(res.statusCode, 200);
+
+  const countLine = res.body
+    .split('\n')
+    .find(
+      (l) =>
+        l.startsWith('http_request_duration_seconds_count') &&
+        l.includes('route="/:shortCode"') &&
+        l.includes('status="302"')
+    );
+  assert.ok(countLine, 'expected a count for redirects');
+  assert.ok(countLine.endsWith(' 1'));
+  assert.ok(!res.body.includes('route="/health"'));
+});

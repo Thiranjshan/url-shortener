@@ -222,3 +222,23 @@ test('verify looks API keys up by hash, and rejects unknown keys', async () => {
     assert.ok(!lookups.includes('sk_valid'), 'the database must be queried with the hash, not the key');
   });
 });
+
+test('GET /metrics exposes request metrics', async () => {
+  await withServer(noPool, async (base) => {
+    await call(base, '/verify', 'GET'); // no credentials: counted as a 401
+
+    const res = await call(base, '/metrics', 'GET');
+    assert.equal(res.status, 200);
+    const text = await res.text();
+
+    const countLine = text
+      .split('\n')
+      .find(
+        (l) =>
+          l.startsWith('http_request_duration_seconds_count') &&
+          l.includes('route="/verify"') &&
+          l.includes('status="401"')
+      );
+    assert.ok(countLine, 'expected a request count for /verify');
+  });
+});
