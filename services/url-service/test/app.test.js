@@ -153,3 +153,28 @@ test("GET /urls lists only the authenticated user's links", async () => {
     assert.deepEqual(calls[0], [7]); // filtered by the user id that auth-service returned
   });
 });
+
+test('GET /metrics exposes request metrics labelled by route pattern', async () => {
+  const pool = { query: async () => ({ rows: [{ original_url: 'https://example.com' }] }) };
+  await withServer({ pool, fetchFn: authOk }, async (base) => {
+    await fetch(`${base}/urls/abc1234`);
+    await fetch(`${base}/health`);
+
+    const res = await fetch(`${base}/metrics`);
+    assert.equal(res.status, 200);
+    const text = await res.text();
+
+    const countLine = text
+      .split('\n')
+      .find(
+        (l) =>
+          l.startsWith('http_request_duration_seconds_count') &&
+          l.includes('route="/urls/:shortCode"') &&
+          l.includes('status="200"')
+      );
+    assert.ok(countLine, 'expected a request count for the route');
+    assert.ok(countLine.endsWith(' 1'));
+    assert.ok(!text.includes('route="/health"'), 'health checks should not be counted');
+    assert.ok(text.includes('process_cpu_user_seconds_total'), 'default process metrics expected');
+  });
+});

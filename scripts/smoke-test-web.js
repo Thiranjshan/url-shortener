@@ -125,7 +125,7 @@ async function main() {
   check('click reached analytics', total >= 1, `(totalClicks=${total})`);
 
   console.log('Exposure');
-  for (const path of ['/api/auth/verify', '/api/auth/api-keys']) {
+  for (const path of ['/api/auth/verify', '/api/auth/api-keys' , '/metrics' ]) {
     r = await fetch(`${WEB}${path}`);
     check(`${path} is not exposed (404)`, r.status === 404, `(got ${r.status})`);
   }

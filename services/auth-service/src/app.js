@@ -2,6 +2,7 @@ const express = require('express');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { createMetrics } = require('./metrics');
 
 function createApp({ pool, jwtSecret, jwtExpiresIn = '1h' }) {
   if (!jwtSecret) {
@@ -9,6 +10,8 @@ function createApp({ pool, jwtSecret, jwtExpiresIn = '1h' }) {
   }
 
   const app = express();
+  const metrics = createMetrics();
+  app.use(metrics.middleware);
   app.use(express.json());
 
   const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
@@ -178,7 +181,11 @@ function createApp({ pool, jwtSecret, jwtExpiresIn = '1h' }) {
     }
   });
 
+  app.get('/metrics', metrics.handler);
+
+
   return app;
 }
+
 
 module.exports = { createApp };
