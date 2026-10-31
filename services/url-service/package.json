@@ -2,11 +2,11 @@
   "name": "url-service",
   "version": "1.0.0",
   "main": "index.js",
-"scripts": {
-  "dev": "nodemon src/index.js",
-  "start": "node src/index.js",
-  "test": "node --test"
-},
+  "scripts": {
+    "dev": "nodemon src/index.js",
+    "start": "node src/index.js",
+    "test": "node --test"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
@@ -17,6 +17,7 @@
   "dependencies": {
     "express": "^5.2.1",
     "nanoid": "^3.3.19",
-    "pg": "^8.23.0"
+    "pg": "^8.23.0",
+    "prom-client": "^15.1.3"
   }
 }

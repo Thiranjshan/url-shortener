@@ -1,7 +1,33 @@
 const Fastify = require('fastify');
+const client = require('prom-client');
 
 function buildApp({ urlServiceUrl, publishClick, fetchFn = fetch, logger = false }) {
   const app = Fastify({ logger });
+
+    const register = new client.Registry();
+  client.collectDefaultMetrics({ register });
+
+  const httpDuration = new client.Histogram({
+    name: 'http_request_duration_seconds',
+    help: 'HTTP request duration in seconds',
+    labelNames: ['method', 'route', 'status'],
+    buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5],
+    registers: [register],
+  });
+
+  app.addHook('onResponse', async (request, reply) => {
+    const route = request.routeOptions && request.routeOptions.url;
+    if (!route || route === '/metrics' || route === '/health') return;
+    httpDuration.observe(
+      { method: request.method, route, status: reply.statusCode },
+      reply.elapsedTime / 1000
+    );
+  });
+
+  app.get('/metrics', async (request, reply) => {
+    reply.header('Content-Type', register.contentType);
+    return register.metrics();
+  });
 
   app.get('/health', async () => ({ status: 'ok', service: 'redirect-service' }));
 

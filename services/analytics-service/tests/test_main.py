@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
+from prometheus_client import REGISTRY
 
 import main
 
@@ -157,3 +158,33 @@ def test_health_endpoint():
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "service": "analytics-service"}
+
+def test_metrics_endpoint_counts_requests_by_route_pattern(monkeypatch):
+    monkeypatch.setitem(main.state, "pool", FakePool(total=1))
+    client = TestClient(main.app)
+
+    client.get("/stats/abc1234")
+    client.get("/health")
+    body = client.get("/metrics").text
+
+    count_lines = [
+        line
+        for line in body.splitlines()
+        if line.startswith("http_request_duration_seconds_count")
+        and 'route="/stats/{short_code}"' in line
+        and 'status="200"' in line
+    ]
+    assert count_lines, "expected a request count for the stats route"
+    assert 'route="/health"' not in body
+
+
+def test_click_counters_track_stored_and_dropped_events(monkeypatch):
+    monkeypatch.setitem(main.state, "pool", FakePool())
+    stored_before = REGISTRY.get_sample_value("clicks_stored_total") or 0
+    dropped_before = REGISTRY.get_sample_value("clicks_dropped_total") or 0
+
+    asyncio.run(main.handle_message(FakeMessage(valid_event())))
+    asyncio.run(main.handle_message(FakeMessage(b"not json")))
+
+    assert REGISTRY.get_sample_value("clicks_stored_total") == stored_before + 1
+    assert REGISTRY.get_sample_value("clicks_dropped_total") == dropped_before + 1
