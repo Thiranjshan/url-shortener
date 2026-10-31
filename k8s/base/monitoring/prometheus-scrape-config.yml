@@ -1,0 +1,38 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: url-service
+    static_configs:
+      - targets: ['url-service:3000']
+
+  - job_name: redirect-service
+    static_configs:
+      - targets: ['redirect-service:3001']
+
+  - job_name: auth-service
+    static_configs:
+      - targets: ['auth-service:3002']
+
+  - job_name: analytics-service
+    static_configs:
+      - targets: ['analytics-service:8000']
+
+  - job_name: rabbitmq
+    static_configs:
+      - targets: ['rabbitmq:15692']
+
+  # CPU and memory of every container, read from the node's kubelet
+  - job_name: cadvisor
+    scheme: https
+    metrics_path: /metrics/cadvisor
+    tls_config:
+      insecure_skip_verify: true
+    authorization:
+      credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    kubernetes_sd_configs:
+      - role: node

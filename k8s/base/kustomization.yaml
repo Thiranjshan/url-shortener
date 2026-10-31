@@ -16,6 +16,9 @@ resources:
   - apps/redirect-service.yaml
   - apps/analytics-service.yaml
   - apps/web.yaml
+  - monitoring/prometheus-rbac.yaml
+  - monitoring/prometheus-deployment.yaml
+  - monitoring/grafana.yaml
 
 images:
   - name: url-service
@@ -33,3 +36,21 @@ images:
   - name: web
     newName: ghcr.io/thiranjshan/url-shortener/web
     newTag: "sha-7f6938a"
+
+configMapGenerator:
+  - name: prometheus-config
+    namespace: url-shortener
+    files:
+      - prometheus.yml=monitoring/prometheus-scrape-config.yml 
+  - name: grafana-datasource
+    namespace: url-shortener
+    files:
+      - monitoring/grafana-datasource.yaml
+  - name: grafana-dashboard-provider
+    namespace: url-shortener
+    files:
+      - monitoring/grafana-dashboard-provider.yaml
+  - name: grafana-dashboards
+    namespace: url-shortener
+    files:
+      - monitoring/url-shortener-dashboard.json
