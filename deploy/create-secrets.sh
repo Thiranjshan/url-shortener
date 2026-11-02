@@ -25,3 +25,7 @@ create_if_missing rabbitmq-secret \
   --from-literal=RABBITMQ_DEFAULT_USER=app \
   --from-literal=RABBITMQ_DEFAULT_PASS="$(rand_hex)"
 create_if_missing auth-secret --from-literal=JWT_SECRET="$(rand_hex 32)"
+
+create_if_missing grafana-secret \
+  --from-literal=admin-user=admin \
+  --from-literal=admin-password="$(rand_hex)"
