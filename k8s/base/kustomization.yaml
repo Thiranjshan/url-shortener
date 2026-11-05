@@ -23,19 +23,19 @@ resources:
 images:
   - name: url-service
     newName: ghcr.io/thiranjshan/url-shortener/url-service
-    newTag: "sha-56f9d1d"
+    newTag: "sha-7fc7933"
   - name: redirect-service
     newName: ghcr.io/thiranjshan/url-shortener/redirect-service
-    newTag: "sha-56f9d1d"
+    newTag: "sha-7fc7933"
   - name: auth-service
     newName: ghcr.io/thiranjshan/url-shortener/auth-service
-    newTag: "sha-56f9d1d"
+    newTag: "sha-7fc7933"
   - name: analytics-service
     newName: ghcr.io/thiranjshan/url-shortener/analytics-service
-    newTag: "sha-56f9d1d"
+    newTag: "sha-7fc7933"
   - name: web
     newName: ghcr.io/thiranjshan/url-shortener/web
-    newTag: "sha-56f9d1d"
+    newTag: "sha-7fc7933"
 
 configMapGenerator:
   - name: prometheus-config
