@@ -20,10 +20,10 @@ spec:
   ingressClassName: traefik
   tls:
     - hosts:
-        - yourname-shortener.duckdns.org
+        - urlshortenapp.duckdns.org
       secretName: web-tls
   rules:
-    - host: yourname-shortener.duckdns.org
+    - host: urlshortenapp.duckdns.org
       http:
         paths:
           - path: /
@@ -45,7 +45,7 @@ metadata:
 spec:
   ingressClassName: traefik
   rules:
-    - host: yourname-shortener.duckdns.org
+    - host: urlshortenapp.duckdns.org
       http:
         paths:
           - path: /
