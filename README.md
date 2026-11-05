@@ -2,59 +2,77 @@
 
 [![CI](https://github.com/Thiranjshan/url-shortener/actions/workflows/ci.yaml/badge.svg)](https://github.com/Thiranjshan/url-shortener/actions/workflows/ci.yaml)
 
-A URL shortener with real-time click analytics, built as a set of small services and shipped with a complete DevOps toolchain: containers, automated tests, a CI/CD pipeline, Kubernetes, and Terraform on AWS.
+A URL shortener with real-time click analytics, built to practise the full DevOps lifecycle end to end: containers, automated tests, a CI/CD pipeline, Kubernetes, Terraform on AWS, GitOps deployment, monitoring, load testing and HTTPS.
 
-The application is deliberately simple. The project focuses on the engineering around it: service boundaries, testing, packaging, deployment, and recovery.
+The application is deliberately simple. The engineering around it is the point: how the parts are separated, tested, packaged, deployed, observed and recovered when something fails.
 
-**Status:** runs locally (Docker Compose and Kubernetes) and on AWS (k3s on one EC2 server created by Terraform). Dashboards, load testing, HTTPS and GitOps are next. See the [Roadmap](#roadmap).
+**Live demo:** https://urlshortenapp.duckdns.org
+
+> The live demo runs on a single AWS instance and may be turned off to limit cloud costs.
 
 ---
 
 ## Screenshots
 
-| ![The URL shortener running on AWS](doc/images/ui.png) | ![Kubernetes pods running on AWS](doc/images/pods.png) |
-| ------------------------------------------------------ | ------------------------------------------------------ |
-| The app running on AWS                                 | Services running on the k3s server                     |
-| ![GitHub Actions workflow summary](doc/images/pipeline.png) | ![CI test run showing pull request checks](doc/images/ci-test.png) |
-| Successful workflow summary                            | Unit tests, image builds, and integration checks       |
-
-![Terraform plan and apply](doc/images/terraform.jpeg)
-
-Terraform plan and apply
+|                                                                  |                                                                   |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------- |
+| ![The URL shortener running on AWS](docs/images/ui.png)          | ![Kubernetes pods running on AWS](docs/images/pods.png)           |
+| The app running on AWS                                           | Services running on the k3s server                                |
+| ![GitHub Actions pipeline on main](docs/images/pipeline.png)     | ![CI test run on a pull request](docs/images/ci-test.png)         |
+| Successful workflow summary                                      | Unit tests, image builds and integration checks                   |
+| ![Terraform plan and apply](docs/images/terraform.jpeg)          | ![Argo CD application synced and healthy](docs/images/argocd.png) |
+| Terraform creating the server from code                          | Argo CD showing the app Synced and Healthy                        |
+| ![Grafana dashboard under load](docs/images/grafana.png)         | ![k6 load test summary](docs/images/k6.png)                       |
+| Grafana dashboard during the load test                           | k6 summary from the load test                                     |
+| ![Prometheus targets all UP](docs/images/prometheus-targets.png) | ![HTTPS with a valid certificate](docs/images/https.png)          |
+| Prometheus targets, all UP                                       | HTTPS with a valid certificate                                    |
 
 ---
 
-## Table of contents
+## Contents
 
+- [What it does](#what-it-does)
 - [Architecture](#architecture)
-- [Services](#services)
-- [CI/CD pipeline](#cicd-pipeline)
+- [How a change reaches production](#how-a-change-reaches-production)
 - [Tech stack](#tech-stack)
 - [Running it](#running-it)
 - [API](#api)
+- [Observability](#observability)
+- [Load test](#load-test)
 - [Design decisions](#design-decisions)
-- [Failure and recovery demos](#failure-and-recovery-demos)
+- [Failure and recovery](#failure-and-recovery)
 - [Testing](#testing)
 - [Repository layout](#repository-layout)
 - [Cost and teardown](#cost-and-teardown)
-- [Roadmap](#roadmap)
 - [Known limitations](#known-limitations)
-- [What went wrong and what it taught me](#what-went-wrong-and-what-it-taught-me)
+- [Lessons learned](#lessons-learned)
+- [Future work](#future-work)
 
 ---
 
+## What it does
+
+- Sign up and log in with email and password
+- Shorten a long link and get a short one, such as `https://urlshortenapp.duckdns.org/abc1234`
+- Open a short link, which redirects with `302` and records a click
+- See your links with their click counts in a small web UI
+- Create API keys for programmatic use
+
 ## Architecture
 
-A single nginx container is the front door. It serves the UI and routes API calls and short links to the right service. Only the endpoints the page needs are exposed; internal ones such as credential verification are unreachable from outside.
+A single nginx container is the public front door. It serves the UI and routes API calls and short links to the right service. Only the endpoints the page needs are exposed. Internal endpoints, such as credential verification and metrics, return `404` from outside.
+
+HTTPS terminates at Traefik, the ingress controller that ships with k3s. The certificate comes from Let's Encrypt and is renewed automatically by cert-manager. Traffic inside the cluster stays plain HTTP.
 
 ```mermaid
 flowchart LR
-    User([Browser]) --> WEB["web<br/>nginx :80<br/>UI + front door"]
+    User([Browser]) -->|HTTPS| TR["Traefik<br/>TLS certificate"]
+    TR --> WEB["web<br/>nginx: UI and front door"]
 
-    WEB -->|"/api/auth/login, register"| AUTH["auth-service<br/>Node / Express"]
+    WEB -->|"/api/auth/*"| AUTH["auth-service<br/>Node / Express"]
     WEB -->|"/api/urls"| URL["url-service<br/>Node / Express"]
-    WEB -->|"/api/stats/..."| ANA["analytics-service<br/>Python / FastAPI"]
-    WEB -->|"/abc1234 (short link)"| RED["redirect-service<br/>Node / Fastify"]
+    WEB -->|"/api/stats/*"| ANA["analytics-service<br/>Python / FastAPI"]
+    WEB -->|"/{code}"| RED["redirect-service<br/>Node / Fastify"]
 
     URL -->|"verify credentials"| AUTH
     RED -->|"look up code"| URL
@@ -68,7 +86,7 @@ flowchart LR
 
 ### What happens on a click
 
-The redirect is the hot path, so it does as little as possible. Recording the click is asynchronous: a slow or broken analytics pipeline can never delay or break a redirect.
+The redirect is the hot path, so it does as little work as possible. Recording the click is asynchronous: a slow or broken analytics pipeline can never delay or break a redirect.
 
 ```mermaid
 sequenceDiagram
@@ -86,68 +104,55 @@ sequenceDiagram
     R-->>C: 302 redirect
     Q-)A: deliver click event
     A->>T: INSERT click
-    A-->>Q: ack
+    A-->>Q: acknowledge
 ```
 
----
+## How a change reaches production
 
-## Services
-
-| Service             | Stack                    | Responsibility                                             | Data                        |
-| ------------------- | ------------------------ | ---------------------------------------------------------- | --------------------------- |
-| `web`               | nginx, plain HTML/CSS/JS | UI and the single public entry point                       | none                        |
-| `url-service`       | Node.js, Express         | Create and list short links (authenticated), resolve codes | PostgreSQL (`urlshortener`) |
-| `redirect-service`  | Node.js, Fastify         | Public redirect, emits one click event per redirect        | none (stateless)            |
-| `auth-service`      | Node.js, Express         | Registration, JWT login, API keys, credential verification | PostgreSQL (`authdb`)       |
-| `analytics-service` | Python, FastAPI          | Consumes click events, stores and aggregates them          | TimescaleDB                 |
-
-Supporting infrastructure: PostgreSQL 16, TimescaleDB, RabbitMQ.
-
-Each service owns its data. No service reads another service's tables. `url-service` stores a `user_id` as a plain reference, with no cross-database foreign key.
-
----
-
-## CI/CD pipeline
-
-Every pull request and push to `main` runs the service tests and full-stack integration test. Pull requests also build images without pushing them; pushes to `main` publish images only after the checks pass.
+Merging a pull request is the only deployment step. Nothing is copied to the server by hand.
 
 ```mermaid
 flowchart LR
-    PR["Pull request"] --> T["Unit tests<br/>url, redirect, auth, analytics"]
+    PR["Pull request"] --> T["Unit tests<br/>4 services, in parallel"]
+    T --> V["Manifest check<br/>renders all overlays"]
+    PR --> B["Build images<br/>no push"]
     T --> I["Integration test<br/>full stack in Docker Compose<br/>+ smoke test"]
-    PR --> B["Build all images<br/>(no push)"]
-    I -->|"merge to main"| P["Publish images<br/>tag: sha-commit"]
+    I -->|"merge to main"| P["Publish images<br/>tagged with commit SHA"]
+    V --> P
     P --> R[("GHCR")]
-    R -->|"image pull"| K["k3s on AWS EC2"]
-    TF["Terraform"] -->|"creates"| K
+    P --> REL["Release job<br/>commits new tags to Git"]
+    REL -->|"new commit on main"| GIT[("Git: source of truth")]
+    GIT -->|"watched by"| AC["Argo CD<br/>on the server"]
+    AC -->|"applies manifests"| K["k3s on AWS"]
+    R -->|"image pull"| K
 ```
 
-- **Unit tests** run per service in parallel (Node's built-in test runner and pytest) with no database, network, or Docker. Dependencies are injected, so tests use small fakes.
-- **Integration job** starts the whole stack with Docker Compose on a clean runner and runs an end-to-end smoke test. It catches wiring and configuration bugs that unit tests structurally cannot see.
-- **Publish job** runs only on `main`, only after tests and integration pass. It pushes one image per service, tagged with the commit SHA. Tags are immutable, so every deployment can say exactly which commit it runs.
-- **Least privilege:** the workflow is read-only by default. Only the publish job gets permission to write packages, using a short-lived token. No registry passwords are stored anywhere.
-
----
+- **Continuous integration:** every change is tested before it can merge. A failing test blocks the merge, and a failing integration test blocks publishing.
+- **Continuous delivery:** each passing change becomes immutable, versioned images, tagged with the commit they came from.
+- **Continuous deployment:** the release job records the new tags in Git, and Argo CD, which runs inside the cluster and pulls from Git, applies them. The server never needs credentials from GitHub, and GitHub never needs the server's address.
+- **Loop protection:** the release commit is pushed with the built-in token, which does not trigger new workflows, and its message carries `[skip ci]` as a second guard.
+- **Docs-only changes** (Markdown, `docs/`, `loadtest/`) skip the pipeline, so they never redeploy anything.
 
 ## Tech stack
 
-| Area                   | Technology                                                 |
-| ---------------------- | ---------------------------------------------------------- |
-| Services               | Node.js 22 (Express, Fastify), Python 3.13 (FastAPI)       |
-| Data and messaging     | PostgreSQL 16, TimescaleDB, RabbitMQ                       |
-| Front door             | nginx                                                      |
-| Containers             | Docker, Docker Compose                                     |
-| Orchestration          | Kubernetes (Docker Desktop locally, k3s on AWS), Kustomize |
-| Infrastructure as code | Terraform (AWS provider)                                   |
-| Cloud                  | AWS EC2, security groups                                   |
-| CI/CD                  | GitHub Actions, GitHub Container Registry (GHCR)           |
-| Testing                | `node --test`, pytest, end-to-end smoke tests              |
-
----
+| Area                   | Technology                                                                               |
+| ---------------------- | ---------------------------------------------------------------------------------------- |
+| Services               | Node.js 22 (Express, Fastify), Python 3.13 (FastAPI)                                     |
+| Data and messaging     | PostgreSQL 16, TimescaleDB, RabbitMQ 3                                                   |
+| Front door and UI      | nginx, plain HTML, CSS and JavaScript (no framework)                                     |
+| Containers             | Docker, Docker Compose                                                                   |
+| Orchestration          | Kubernetes: Docker Desktop locally, k3s on AWS. Kustomize with a base and an AWS overlay |
+| Infrastructure as code | Terraform with the AWS provider                                                          |
+| Cloud                  | AWS EC2 (x86, 4 GiB), security groups, IAM                                               |
+| CI/CD                  | GitHub Actions, GitHub Container Registry, Argo CD (GitOps)                              |
+| Certificates           | cert-manager with Let's Encrypt, Traefik ingress                                         |
+| Observability          | Prometheus, Grafana (dashboard as code), RED metrics                                     |
+| Load testing           | k6                                                                                       |
+| Testing                | Node's built-in test runner, pytest, end-to-end smoke tests                              |
 
 ## Running it
 
-### 1. Locally with Docker Compose
+### Locally with Docker Compose
 
 Prerequisites: Docker Desktop, Node.js 18+, Git.
 
@@ -162,222 +167,207 @@ docker compose up --build -d
 node scripts/smoke-test.js
 ```
 
-Open **http://localhost:8080**, create an account, shorten a link, click it, and press Refresh to see the click count.
+Open http://localhost:8080, create an account, shorten a link, open it, and press Refresh to see the click count.
 
-`docker compose down` stops it; add `-v` to also delete the data.
+`docker compose down` stops everything. Add `-v` to also delete the data.
 
-### 2. On a local Kubernetes cluster
+### On a local Kubernetes cluster
 
-Requires a cluster (for example Docker Desktop with Kubernetes enabled) and `kubectl`. The images are pulled from GHCR, so nothing needs to be built locally.
+Requires a cluster, such as Docker Desktop with Kubernetes enabled, and `kubectl`. The images come from GHCR, so nothing is built locally.
 
 ```bash
-bash deploy/create-secrets.sh      # random secrets, created only in the cluster
+bash deploy/create-secrets.sh      # random secrets, created only inside the cluster
 kubectl apply -k k8s/base
-node scripts/port-forward.js       # leave running; forwards the services to localhost
+node scripts/port-forward.js       # leave running
 node scripts/smoke-test.js         # in a second terminal
 ```
 
-The image tags are pinned in `k8s/base/kustomization.yaml`. A release is a one-line change to those tags.
+### On AWS
 
-### 3. On AWS
-
-Terraform creates one server with a firewall that allows SSH from a single address and HTTP from anywhere, then installs k3s on first boot.
+Terraform creates the server, and the server deploys itself:
 
 ```bash
 cd infra/terraform
-cp terraform.tfvars.example terraform.tfvars    # then edit: instance type, your IP
+cp terraform.tfvars.example terraform.tfvars   # set the instance type and your IP
 terraform init
-terraform plan
 terraform apply
 ```
 
-Then log in to the server and deploy the app with the AWS overlay, which adds an Ingress so traffic from the internet reaches the front door:
+On first boot, the server clones this repository and runs `deploy/bootstrap.sh`. That script installs k3s, creates the secrets, installs Argo CD, and hands the application to it. A rebuild from nothing takes about **5 minutes**, measured end to end with `terraform apply` followed by the public smoke test.
+
+A rebuilt server has a new IP address, so update it on DuckDNS afterwards. Certificates are issued automatically once the domain points at the server.
+
+Check the live deployment from outside, using only the public address:
 
 ```bash
-git clone https://github.com/Thiranjshan/url-shortener.git
-cd url-shortener
-bash deploy/create-secrets.sh
-kubectl apply -k k8s/overlays/aws
-kubectl get pods -n url-shortener
+WEB=https://urlshortenapp.duckdns.org node scripts/smoke-test-web.js
 ```
-
-Check it from outside, using only the public address:
-
-```bash
-WEB=http://<server-ip> node scripts/smoke-test-web.js
-```
-
----
 
 ## API
 
-Everything the UI needs is available through the front door:
+Everything the UI uses is available through the front door:
 
-| Method | Path                 | Auth | Description                                            |
-| ------ | -------------------- | ---- | ------------------------------------------------------ |
-| POST   | `/api/auth/register` | none | Create an account (`email`, `password`, 8+ characters) |
-| POST   | `/api/auth/login`    | none | Returns a JWT valid for one hour                       |
-| POST   | `/api/urls`          | JWT  | Create a short link (`url`, must be http or https)     |
-| GET    | `/api/urls`          | JWT  | List your 20 most recent links                         |
-| GET    | `/api/stats/{code}`  | none | Total clicks, clicks per hour, top referers            |
-| GET    | `/{code}`            | none | `302` redirect to the original URL                     |
+| Method | Path                 | Auth           | Description                                              |
+| ------ | -------------------- | -------------- | -------------------------------------------------------- |
+| POST   | `/api/auth/register` | none           | Create an account (`email`, `password` of 8+ characters) |
+| POST   | `/api/auth/login`    | none           | Returns a JWT valid for one hour                         |
+| POST   | `/api/urls`          | JWT or API key | Create a short link (`url` must be http or https)        |
+| GET    | `/api/urls`          | JWT or API key | List your 20 most recent links                           |
+| GET    | `/api/stats/{code}`  | none           | Total clicks, clicks per hour, top referers              |
+| GET    | `/{code}`            | none           | `302` redirect to the original URL                       |
 
-In Docker Compose each service also listens on its own port (url 3000, redirect 3001, auth 3002, analytics 8000). The auth service additionally supports API keys (`/api-keys`) and an internal `/verify` endpoint used by other services. Those are intentionally not exposed through the front door.
+Authenticate with `Authorization: Bearer <token>` or `X-API-Key: <key>`. The auth service also issues API keys, and it has an internal credential check that other services use. Neither is reachable through the front door.
 
----
+## Observability
+
+Every service exposes Prometheus metrics at `/metrics`, labelled by route pattern rather than raw URL, so the number of time series stays bounded. Prometheus scrapes every 15 seconds. It also collects RabbitMQ queue depth and per-pod CPU and memory from the kubelet.
+
+The Grafana dashboard **URL Shortener** is stored as JSON in the repository, so every rebuild recreates it. It shows:
+
+- Service status (UP or DOWN) for every target
+- Redirects per second, split by status code
+- Redirect latency at p50, p95 and p99
+- Requests and server errors per second, by service
+- Click events waiting and being processed in the queue
+- Clicks stored versus dropped
+- CPU and memory per pod
+
+Prometheus and Grafana are never exposed to the internet. They are reached through an SSH tunnel.
+
+## Load test
+
+The load test drives redirects only, stepping the request rate from 25 to 300 requests per second, one minute per step. It runs from a laptop against the public address, using k6 with an arrival-rate model, so it keeps sending at the set rate even when the server slows down.
+
+The full results are in [`loadtest/RESULTS.md`](loadtest/RESULTS.md). They include the highest rate sustained with errors under 1%, client and server latency percentiles, the error rate, and whether every redirect became a stored click. The script is in [`loadtest/redirect.js`](loadtest/redirect.js).
+
+Every redirect performs a database lookup, because there is no cache yet. Adding one is the obvious next experiment.
 
 ## Design decisions
 
 **Database per service.** Each service owns its data and exposes it only through its API. Services stay independently deployable. The cost is that cross-service questions become API calls.
 
-**Asynchronous analytics.** The redirect service publishes a click event and moves on. A redirect never waits for analytics, so analytics outages cannot affect redirects. Events accumulate in a durable queue and are processed when the consumer returns.
+**Asynchronous analytics.** A redirect publishes a click event and moves on. Analytics outages cannot affect redirects, and events wait in a durable queue until the consumer is ready.
 
-**At-least-once delivery.** The consumer acknowledges a message only after the database insert succeeds. If the database is down, the message is requeued. The trade-off is that a message can occasionally be processed twice.
+**At-least-once delivery.** The consumer acknowledges a message only after the database write succeeds. The trade-off is that a message can occasionally be processed twice.
 
-**HTTP 302, not 301.** Browsers cache 301 redirects permanently, so repeat clicks would never reach the server and would be invisible to analytics.
+**HTTP 302, not 301.** Browsers cache a 301 permanently, so repeat visits would skip the server and disappear from analytics.
 
-**Fail closed on authentication.** If `auth-service` is unreachable, creating links returns `503` rather than allowing unauthenticated writes. Redirects do not depend on auth, so existing links keep working.
+**Fail closed on authentication.** If the auth service is unreachable, creating links returns `503` rather than allowing unauthenticated writes. Redirects do not depend on auth.
 
-**Passwords and API keys are hashed differently on purpose.** Passwords use bcrypt (slow, salted). API keys are long random strings, so a fast SHA-256 hash is secure and allows an indexed lookup. Only the hash is stored, and the full key is shown once.
+**Passwords and API keys hashed differently.** Passwords use bcrypt, which is slow and salted. API keys are long random strings, so a fast SHA-256 hash is sufficient and allows an indexed lookup. Only the hash is stored, and the full key is shown once.
 
-**One front door, a short allow-list.** nginx routes by path and exposes only what the page needs. Internal endpoints such as `/verify` and `/api-keys` return 404 from outside, and the public smoke test checks that.
+**One front door, a short allow-list.** nginx exposes only what the page needs. A test checks that internal endpoints return `404` from outside, so a regression would fail the public smoke test.
 
-**Immutable image tags.** Images are tagged with the commit SHA, never deployed as `latest`. Any running version can be traced to a commit, and rolling back is a one-line change.
+**Immutable, traceable images.** Images are tagged with the commit SHA and never deployed as `latest`. Any running version maps to one commit, and rolling back means changing one tag.
 
-**Same image everywhere.** The image that passed CI is the image that runs in Compose, on the local cluster, and on AWS. Only environment variables and secrets differ.
+**Same image everywhere.** The image that passed CI runs in Compose, on the local cluster and on AWS. Only environment variables and secrets differ.
 
-**Base and overlay.** Kubernetes manifests live once in `k8s/base`. The AWS overlay adds only what differs (the Ingress), with no copied YAML.
+**Pull-based deployment.** Argo CD runs inside the cluster and pulls from Git. CI never holds credentials for the server.
 
-**Secrets are random per environment.** `deploy/create-secrets.sh` generates them inside the cluster and never overwrites an existing secret, since replacing a database password would lock the app out of its own data. Nothing sensitive is committed.
+**Base and overlay.** Kubernetes manifests live once, in `k8s/base`. The AWS overlay adds only what differs: the Ingress, the certificate issuer and the HTTPS redirect.
 
-**Disposable infrastructure.** The whole AWS environment is created and destroyed from code. Data is intentionally ephemeral.
+**Readiness separate from liveness.** The analytics service answers health checks as soon as it starts, but reports ready only once its database and queue are connected. Kubernetes sends it traffic only when it is ready.
 
----
+**Secrets generated per environment.** `deploy/create-secrets.sh` creates random values inside the cluster and never overwrites an existing secret, because replacing a database password would lock the app out of its own data.
 
-## Failure and recovery demos
+**Dashboards as code.** The Grafana dashboard, its data source and the Prometheus configuration live in Git.
 
-Each of these is reproducible and shows a failure staying contained.
+## Failure and recovery
 
-**Analytics down, redirects unaffected, nothing lost** (Docker Compose)
+Each of these is reproducible:
 
-```bash
-docker compose stop analytics-service
-curl -i http://localhost:3001/<code>                         # still 302
-docker exec rabbitmq rabbitmqctl list_queues name messages   # click events are waiting
-docker compose start analytics-service                       # backlog is processed
-```
+- **Analytics down:** redirects keep returning `302`, click events wait in RabbitMQ, and the backlog is processed when the consumer returns.
+- **A pod is deleted:** Kubernetes recreates it within seconds.
+- **A bad release:** an image tag that does not exist never becomes ready, so it never receives traffic, and the old version keeps serving. Rolling back is one command.
+- **Manual changes to the cluster:** Argo CD reverts them to match Git.
+- **The whole environment:** `terraform destroy` followed by `terraform apply` recreates it, and the public smoke test confirms it works.
 
-**Kubernetes self-healing**
-
-```bash
-kubectl delete pod -l app=url-service      # a replacement starts within seconds
-```
-
-**Scaling out**
-
-```bash
-kubectl scale deployment redirect-service --replicas=3
-```
-
-**A bad release cannot take the service down**
-
-```bash
-kubectl set image deployment/redirect-service redirect-service=redirect-service:doesnotexist
-# The new pod never becomes ready, so it never receives traffic; the old pod keeps serving.
-kubectl rollout undo deployment/redirect-service
-```
-
-**Persistence is not backup.** Deleting a database pod loses nothing, but `DROP TABLE` is preserved faithfully by the volume too. A manual `pg_dump` and restore drill is part of the project history.
-
----
+Persistent volumes survive pod restarts but not mistakes: a `DROP TABLE` is preserved faithfully. A manual `pg_dump` and restore drill was run during the project. Production would use a managed database with point-in-time recovery.
 
 ## Testing
 
-| Level             | What                                                                                         | Where it runs              |
-| ----------------- | -------------------------------------------------------------------------------------------- | -------------------------- |
-| Unit              | Logic of each service with injected fakes: validation, auth rules, hashing, failure handling | CI, every push             |
-| Integration       | The full stack in Docker Compose plus `scripts/smoke-test.js`                                | CI, every push             |
-| Public smoke test | Black-box checks through the front door only: `scripts/smoke-test-web.js`                    | Against the AWS server     |
-| Infrastructure    | `terraform validate` and `terraform plan`                                                    | Locally before every apply |
+| Level             | What it covers                                                                            | Where it runs             |
+| ----------------- | ----------------------------------------------------------------------------------------- | ------------------------- |
+| Unit              | Validation, auth rules, hashing, failure handling, metrics output                         | Every push, in CI         |
+| Integration       | The full stack in Docker Compose plus the smoke test                                      | Every pull request, in CI |
+| Manifest check    | Every Kubernetes overlay renders                                                          | Every pull request, in CI |
+| Public smoke test | Only the front door: registration, links, redirects, analytics, closed internal endpoints | Against the AWS server    |
+| Load test         | Redirect throughput and latency under rising load                                         | On demand, with k6        |
 
-Several design claims are enforced by tests: authentication fails closed, plaintext API keys never reach the database, a failing queue publisher cannot break a redirect, and unknown emails and wrong passwords return identical responses.
-
----
+Several claims are enforced by tests rather than asserted in prose: authentication fails closed, plaintext API keys never reach the database, a failing queue publisher cannot break a redirect, and unknown emails and wrong passwords return identical responses.
 
 ## Repository layout
 
 ```
 .
 ├── services/
-│   ├── web/                  # nginx front door and UI
-│   ├── url-service/
-│   ├── redirect-service/
-│   ├── auth-service/
-│   └── analytics-service/
+│   ├── web/                  nginx front door and UI
+│   ├── url-service/          Node.js, Express
+│   ├── redirect-service/     Node.js, Fastify
+│   ├── auth-service/         Node.js, Express
+│   └── analytics-service/    Python, FastAPI
 ├── k8s/
-│   ├── base/                 # databases, broker, services, web
-│   └── overlays/aws/         # adds the Ingress used on the AWS server
-├── infra/terraform/          # AWS firewall, EC2 server, k3s bootstrap
-├── deploy/create-secrets.sh  # generates random cluster secrets
-├── db/                       # init SQL used by Docker Compose
-├── scripts/                  # smoke tests, port-forward helper
-├── .github/workflows/ci.yaml # tests, integration, build, publish
-├── docker-compose.yml
-└── ROADMAP.md
+│   ├── base/                 databases, broker, services, monitoring
+│   └── overlays/aws/         Ingress, certificate issuer, HTTPS redirect
+├── infra/terraform/          firewall rules and the EC2 server
+├── argocd/                   Argo CD application (continuous deployment)
+├── deploy/
+│   ├── bootstrap.sh          first-boot setup: k3s, secrets, Argo CD
+│   └── create-secrets.sh     random cluster secrets
+├── db/                       database schemas for Docker Compose
+├── scripts/                  smoke tests and port-forward helper
+├── loadtest/                 k6 script and recorded results
+├── docs/                     screenshots and supporting documents
+├── .github/workflows/ci.yaml CI, integration, publish and release
+└── docker-compose.yml
 ```
 
----
-
 ## Cost and teardown
-
-Everything on AWS can be removed with one command, which stops all spending:
 
 ```bash
 cd infra/terraform
 terraform destroy
 ```
 
-The project was built on the AWS Free plan using a single x86 instance with 4 GiB of memory. With the full stack running, the node used about 1.6 GiB of 3.7 GiB, and the application pods about 350 MiB between them.
-
----
-
-## Roadmap
-
-- [x] Four backend services with PostgreSQL, TimescaleDB and RabbitMQ
-- [x] Docker Compose environment
-- [x] Kubernetes manifests with Kustomize
-- [x] CI: unit tests, integration test, image builds
-- [x] Immutable images published to GHCR
-- [x] Minimal UI behind an nginx front door
-- [x] AWS deployment: Terraform-created server running k3s
-- [ ] Automate the app deployment inside the Terraform bootstrap (one command from nothing to a running app)
-- [ ] Prometheus and Grafana dashboards
-- [ ] k6 load tests, with published results
-- [ ] HTTPS and a domain name
-- [ ] GitOps with ArgoCD and automatic image-tag updates
-
----
+This removes everything in AWS and stops all spending. The project ran on the AWS Free plan on a single x86 instance with 4 GiB of memory. With the full stack running, the node used about 1.6 GiB of 3.7 GiB.
 
 ## Known limitations
 
-- **HTTP only.** There is no HTTPS yet, so traffic is unencrypted and the browser clipboard button falls back to manual copy.
+These are known and documented, not oversights.
+
+- **cert-manager is installed by hand once** on the running server. It's also in the bootstrap for rebuilds, but a fully GitOps setup would manage it with Argo CD too.
+- **The DNS name changes with the server.** The free DuckDNS subdomain must be updated after each rebuild. A paid domain with a static IP would remove this.
+- **The API's `shortUrl` field uses `localhost` as its base address.** The UI builds links from the page's own address, so it works, but the API should use the public address.
 - **Analytics stats are public.** Anyone who knows a short code can read its click counts.
-- **`analytics-service` does not wait for its database at startup.** On a cold start it restarts a few times until the database is ready. Kubernetes handles this, but it should retry politely.
-- **The consumer is not idempotent**, and there is no dead-letter queue. A redelivered message could be counted twice, and malformed events are dropped.
-- **Clicks are skipped while `redirect-service` is disconnected from the broker.** That is the price of never blocking a redirect.
-- **The token is stored in `localStorage`.** Acceptable for a demo; production would use httpOnly cookies.
+- **The consumer is not idempotent**, and there is no dead-letter queue. A redelivered click could be counted twice, and malformed events are dropped.
+- **Clicks are skipped while `redirect-service` is disconnected from the broker.** This is the deliberate price of never blocking a redirect.
+- **Every redirect hits the database.** A cache would reduce that load.
+- **Prometheus scrapes Services, not individual pods.** With several replicas, per-pod discovery is the upgrade.
+- **Python dependencies are not pinned** with a lockfile, unlike the Node services.
+- **The session token is stored in `localStorage`.** Acceptable for a demo; production would use httpOnly cookies.
 - **No rate limiting** on public endpoints.
-- **No monitoring or alerting yet.**
-- **Secrets are created by a script on the server**, not managed by a secrets service.
-- **Python dependencies are not pinned**, unlike the Node services, which use lockfiles.
+- **No alerting.** Dashboards exist, but nothing pages anyone.
+- **Secrets are generated on the server**, not held in a secrets manager.
+- **A single node.** There is no high availability: if the instance fails, the service is down until it is rebuilt.
 
----
+## Lessons learned
 
-## What went wrong and what it taught me
+- **A flaky test had a real cause.** The smoke test sometimes failed because the first click arrived before the redirect service had connected to RabbitMQ. By design, that click is skipped. The test now accounts for that instead of relying on a sleep.
+- **Only the integration job caught a real bug.** I pointed `url-service` at the wrong auth port on purpose. Every unit test passed, and only the integration test failed. That is the strongest argument for testing at two levels.
+- **A red pipeline can still be merged.** One pull request was merged with a failing integration job, so the publish step never ran and the image needed for the next deployment did not exist. Branch protection that requires passing checks prevents this.
+- **Cloud guardrails are real.** An organisation-level policy blocked one API call regardless of IAM permissions. The error named the policy, which saved a lot of guessing.
+- **Line endings break shell scripts.** A script written on Windows failed on Linux. A `.gitattributes` rule and a guard in Terraform now prevent it.
+- **Ping is not a health check.** ICMP is blocked by design, so a failed ping says nothing. Testing the real port and checking the firewall rules is what finds the problem.
+- **Some failures look like others.** An SSH timeout caused by a changed home IP looks the same as a dead server. Checking the allowed address first saves time.
+- **A certificate can be stuck on a name mismatch.** The certificate requested a placeholder domain while the Ingress served the real one, so the challenge returned `404`. The fix was to match the names everywhere, and the logs named the problem.
+- **Automation is only trustworthy if it is tested from nothing.** The timed rebuild is the test that proved the deployment is reproducible.
 
-- **A flaky integration test.** The smoke test sometimes failed because the first click could arrive before the redirect service had connected to RabbitMQ. Clicks in that window are skipped by design, so the test now allows for that instead of relying on a blind sleep.
-- **A bug that only the integration job could catch.** I pointed `url-service` at the wrong auth port on purpose. All unit tests stayed green and the integration job failed. The failure showed why both unit and integration tests are needed.
-- **A merge with a red pipeline.** A pull request was merged while the integration job was failing, so the publish step never ran and the image I needed did not exist. Branch protection that requires checks would have prevented it.
-- **A cloud guardrail.** An organization-level policy on the AWS account blocked one API call, regardless of IAM permissions. Reading the "explicit deny in a service control policy" message correctly saved a lot of time.
-- **Windows line endings.** A shell script written on Windows would have failed on Linux. A `.gitattributes` rule and a guard in Terraform now prevent it.
-- **Ping is not a health check.** The server answered on port 80 locally but not from the internet, and ICMP was blocked by design. Testing the actual port and inspecting the firewall rules found the problem.
+## Future work
+
+- An application-level cache for redirects, with a before-and-after load test
+- Per-pod metrics discovery and Grafana alert rules
+- A managed database with point-in-time recovery and a scheduled backup job
+- Move cert-manager and the Argo CD installation under Argo CD itself
+- Idempotent analytics writes with a unique event ID, and a dead-letter queue
+- Rate limiting at the front door
+- A static IP and a custom domain, so rebuilds need no DNS update
